@@ -212,7 +212,18 @@ with col_input2:
 # ============ 热门话题快捷按钮 ============
 
 st.markdown("**🔥 热门话题**")
-quick_topics = ["AI大模型", "ChatGPT", "新能源汽车", "量子计算", "元宇宙", "数字货币", "自动驾驶", "机器人"]
+quick_topics = [
+    "樊振东加盟杜塞",
+    "经济持续向好",
+    "白鹿演唱会",
+    "江苏税务回应偷拍",
+    "下午休性价比最高",
+    "小环境待太久",
+    "一念江南",
+    "北京男篮vs广东",
+    "给阿嬷的情书",
+    "汪涵槟榔",
+]
 cols = st.columns(len(quick_topics))
 for i, topic in enumerate(quick_topics):
     with cols[i]:
