@@ -39,9 +39,9 @@ from utils import log
 # ============ 动态热榜获取 ============
 
 @st.cache_data(ttl=1200)
-def fetch_zhihu_hot(access_key: str) -> list:
+def fetch_zhihu_hot() -> list:
     """
-    获取知乎热榜前十话题，缓存 20 分钟。
+    获取知乎热榜前十话题（使用 api.zhihu.com 公开接口，无需认证），缓存 20 分钟。
     失败返回空列表，由调用方降级处理。
     """
     try:
@@ -50,12 +50,12 @@ def fetch_zhihu_hot(access_key: str) -> list:
         st.error("httpx 未安装，请运行: pip install httpx")
         return []
     
-    url = "https://www.zhihu.com/api/v4/feed/topstory/hot-lists/total"
+    # 使用 api.zhihu.com 公开接口，无需 access_key 认证
+    url = "https://api.zhihu.com/topstory/hot-list"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Authorization": f"Bearer {access_key}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36"
     }
-    params = {"limit": 10}
+    params = {"limit": 10, "reverse_order": 0}
     
     try:
         resp = httpx.get(url, headers=headers, params=params, timeout=10)
@@ -255,7 +255,7 @@ st.markdown("**🔥 热门话题**")
 
 # 动态获取知乎热榜
 ZHIHU_ACCESS_KEY = "3fc7f3480ba1b85bc04ac7be7f489a4b7a451fd2"
-quick_topics = fetch_zhihu_hot(ZHIHU_ACCESS_KEY)
+quick_topics = fetch_zhihu_hot()
 
 # 失败降级：使用备份列表
 if not quick_topics:
@@ -541,9 +541,8 @@ if not result:
     ### 🎯 使用说明
 
     1. **输入关键词**：在上方输入框输入你想分析的知乎话题
-    2. **配置 API**（可选）：在左侧填入知乎 APP_ID 和 APP_KEY 获取真实数据
-    3. **开始分析**：点击「开始分析」按钮，等待结果
-    4. **查看报告**：情绪分布、观点提取、关键词分析一应俱全
+    2. **开始分析**：点击「开始分析」按钮，等待结果
+    3. **查看报告**：情绪分布、观点提取、关键词分析一应俱全
 
     ### ✨ 功能特色
 
