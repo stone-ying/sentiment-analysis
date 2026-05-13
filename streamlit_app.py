@@ -162,9 +162,8 @@ if "analyzing" not in st.session_state:
 
 # ============ 全局实例 ============
 
-@st.cache_resource
-def get_searcher():
-    return ZhihuSearcher()
+def get_searcher(limit: int = 20):
+    return ZhihuSearcher(limit=limit)
 
 @st.cache_resource
 def get_analyzer():
@@ -206,7 +205,7 @@ with st.sidebar:
 
     # 分析参数
     st.subheader("📊 分析参数")
-    limit = st.slider("搜索条数", min_value=5, max_value=50, value=20, step=5)
+    limit = st.slider("搜索回答数", min_value=5, max_value=100, value=30, step=5)
 
     data_mode = st.radio(
         "数据来源",
@@ -287,7 +286,7 @@ if analyze_btn and keyword:
 
     with st.spinner(f"🔍 正在分析「{keyword}」的知乎舆情..."):
         try:
-            searcher = get_searcher()
+            searcher = get_searcher(limit=limit)
             analyzer = get_analyzer()
             formatter = get_formatter()
 
