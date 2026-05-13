@@ -36,6 +36,46 @@ from wordcloud_gen import WordCloudGenerator
 from formatter import ReportFormatter
 from utils import log
 
+# ============ 动态热榜获取 ============
+
+@st.cache_data(ttl=1200)
+def fetch_zhihu_hot(access_key: str) -> list:
+    """
+    获取知乎热榜前十话题，缓存 20 分钟。
+    失败返回空列表，由调用方降级处理。
+    """
+    try:
+        import httpx
+    except ImportError:
+        st.error("httpx 未安装，请运行: pip install httpx")
+        return []
+    
+    url = "https://www.zhihu.com/api/v4/feed/topstory/hot-lists/total"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Authorization": f"Bearer {access_key}",
+    }
+    params = {"limit": 10}
+    
+    try:
+        resp = httpx.get(url, headers=headers, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        topics = []
+        for item in data.get("data", [])[:10]:
+            target = item.get("target", {})
+            title = target.get("title", "")
+            if title:
+                topics.append(title)
+        return topics if topics else []
+    except Exception as e:
+        try:
+            st.warning(f"获取热榜失败：{e}")
+        except Exception:
+            pass
+        return []
+
+
 # ============ 页面配置 ============
 
 st.set_page_config(
@@ -212,18 +252,26 @@ with col_input2:
 # ============ 热门话题快捷按钮 ============
 
 st.markdown("**🔥 热门话题**")
-quick_topics = [
-    "樊振东加盟杜塞",
-    "经济持续向好",
-    "白鹿演唱会",
-    "江苏税务回应偷拍",
-    "下午休性价比最高",
-    "小环境待太久",
-    "一念江南",
-    "北京男篮vs广东",
-    "给阿嬷的情书",
-    "汪涵槟榔",
-]
+
+# 动态获取知乎热榜
+ZHIHU_ACCESS_KEY = "3fc7f3480ba1b85bc04ac7be7f489a4b7a451fd2"
+quick_topics = fetch_zhihu_hot(ZHIHU_ACCESS_KEY)
+
+# 失败降级：使用备份列表
+if not quick_topics:
+    quick_topics = [
+        "樊振东加盟杜塞",
+        "经济持续向好",
+        "白鹿演唱会",
+        "江苏税务回应偷拍",
+        "下午休性价比最高",
+        "小环境待太久",
+        "一念江南",
+        "北京男篮vs广东",
+        "给阿嬷的情书",
+        "汪涵槟榔",
+    ]
+
 cols = st.columns(len(quick_topics))
 for i, topic in enumerate(quick_topics):
     with cols[i]:
