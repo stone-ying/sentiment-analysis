@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 知乎内容搜索模块
-支持：真实搜索（知乎API + DuckDuckGo）+ Mock 降级
+支持：知乎 Open API（OAuth）+ DuckDuckGo + Mock 降级
 """
 
 import re
 import os
 import json
+import hashlib
+import urllib.parse
 from typing import List, Optional
 from dataclasses import dataclass, field
 
@@ -49,16 +51,32 @@ class ZhihuSearcher:
     """知乎内容搜索器，支持多种搜索源自动切换"""
 
     ZHIHU_API = "https://www.zhihu.com/api/v4/search_v3"
+    ZHIHU_OPEN_API = "https://open.zhihu.com/api"
     DUCKDUCKGO = "https://html.duckduckgo.com/html/"
-    BING_SEARCH = "https://cc.bingj.com/cache.aspx"
 
     def __init__(self, limit: int = 20):
         self.limit = limit
         self._session: Optional[httpx.AsyncClient] = None
+        self._access_token: Optional[str] = None
+        # 从环境变量读取知乎 API 凭证
+        self.app_id = os.getenv("ZHIHU_APP_ID", "")
+        self.app_key = os.getenv("ZHIHU_APP_KEY", "")
 
     async def search(self, keyword: str) -> SearchResult:
         """主搜索入口：依次尝试各搜索源，成功即返回"""
         result = SearchResult(keyword=keyword)
+
+        # 0. 知乎 Open API（如果配置了 APP_ID/APP_KEY）
+        if self.app_id and self.app_key:
+            try:
+                answers = await self._search_zhihu_open_api(keyword)
+                if answers:
+                    log.info(f"知乎 Open API 搜索成功，获取 {len(answers)} 条")
+                    result.answers = answers[:self.limit]
+                    result.total = len(answers)
+                    return result
+            except Exception as e:
+                log.warning(f"知乎 Open API 搜索失败: {e}")
 
         try:
             # 1. 知乎站内搜索
@@ -86,7 +104,7 @@ class ZhihuSearcher:
         log.warning("所有真实搜索失败，启用 Mock 数据")
         return await self.search_mock(keyword)
 
-    # ---- 知乎站内搜索 ----
+    # ---- 知乎 Open API ----
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._session is None or self._session.is_closed:
@@ -102,15 +120,117 @@ class ZhihuSearcher:
             )
         return self._session
 
+    async def _search_zhihu_open_api(self, keyword: str) -> List[ZhihuAnswer]:
+        """通过知乎 Open API 搜索内容（使用 OAuth 授权码模式）"""
+        if not HAS_HTTPX:
+            return []
+
+        client = await self._get_client()
+
+        # 尝试使用 Client Credentials 获取 access_token
+        # 知乎 Open API 支持授权码模式，这里使用 client_credentials 作为服务端调用
+        try:
+            token_resp = await client.post(
+                f"{self.ZHIHU_OPEN_API}/oauth/token",
+                data={
+                    "client_id": self.app_id,
+                    "client_secret": self.app_key,
+                    "grant_type": "client_credentials",
+                },
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+            )
+
+            if token_resp.status_code == 200:
+                token_data = token_resp.json()
+                self._access_token = token_data.get("access_token", "")
+                log.info("知乎 Open API 授权成功")
+            else:
+                log.warning(f"知乎 Open API 授权失败: {token_resp.status_code} {token_resp.text[:200]}")
+                return []
+        except Exception as e:
+            log.warning(f"知乎 Open API 授权异常: {e}")
+            return []
+
+        if not self._access_token:
+            return []
+
+        # 使用 access_token 搜索
+        try:
+            search_resp = await client.get(
+                f"{self.ZHIHU_OPEN_API}/v4/search_v3",
+                params={
+                    "q": keyword,
+                    "t": "general",
+                    "correction": 1,
+                    "offset": 0,
+                    "limit": self.limit,
+                },
+                headers={
+                    "Authorization": f"Bearer {self._access_token}",
+                    "Accept": "application/json",
+                },
+            )
+
+            if search_resp.status_code == 200:
+                data = search_resp.json()
+                return self._parse_open_api_results(data, keyword)
+            else:
+                log.warning(f"知乎 Open API 搜索失败: {search_resp.status_code}")
+                return []
+        except Exception as e:
+            log.warning(f"知乎 Open API 搜索异常: {e}")
+            return []
+
+    def _parse_open_api_results(self, data: dict, keyword: str) -> List[ZhihuAnswer]:
+        """解析知乎 Open API 搜索结果"""
+        answers = []
+        items = data.get("data", [])
+
+        for item in items:
+            obj = item.get("object", {})
+            obj_type = item.get("type", "")
+
+            # 回答类型
+            if obj_type == "search_result" or "question" in obj:
+                question = obj.get("question", {})
+                author = obj.get("author", {})
+
+                answers.append(ZhihuAnswer(
+                    id=f"zh_api_{obj.get('id', len(answers))}",
+                    question=question.get("title", keyword) if isinstance(question, dict) else str(question),
+                    author=author.get("name", "知乎用户") if isinstance(author, dict) else str(author),
+                    content=obj.get("excerpt", obj.get("content", ""))[:500],
+                    voteup_count=obj.get("voteup_count", 0),
+                    comment_count=obj.get("comment_count", 0),
+                    url=obj.get("url", ""),
+                ))
+            # 文章类型
+            elif obj.get("title"):
+                author = obj.get("author", {})
+                answers.append(ZhihuAnswer(
+                    id=f"zh_api_art_{obj.get('id', len(answers))}",
+                    question=obj.get("title", keyword),
+                    author=author.get("name", "知乎用户") if isinstance(author, dict) else str(author),
+                    content=obj.get("excerpt", obj.get("content", ""))[:500],
+                    voteup_count=obj.get("voteup_count", 0),
+                    comment_count=obj.get("comment_count", 0),
+                    url=obj.get("url", ""),
+                ))
+
+        return answers
+
+    # ---- 知乎站内搜索 ----
+
     async def _search_zhihu(self, keyword: str) -> List[ZhihuAnswer]:
-        """通过必应缓存搜索知乎内容（绕过反爬）"""
+        """通过知乎搜索页面爬取内容"""
         if not HAS_HTTPX:
             return []
 
         client = await self._get_client()
 
         try:
-            # 直接搜索知乎问题列表
             url = f"https://www.zhihu.com/search?type=content&q={self._encode(keyword)}"
             resp = await client.get(url, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -223,10 +343,10 @@ class ZhihuSearcher:
 
     async def search_mock(self, keyword: str) -> SearchResult:
         """Mock 搜索：返回丰富的测试数据"""
-        mood_idx = hash(keyword) % 3  # 不同关键词不同情绪分布
+        mood_idx = hash(keyword) % 3
 
         templates = {
-            0: [  # 科技产品
+            0: [
                 ("科技观察者", 1256, "整体来看，{k}是一个值得关注的领域。技术层面已有很大突破，但应用场景还需探索。核心技术已验证可行，关键是商业化落地。"),
                 ("理性分析师", 832, "说实话，我对{k}持保留态度。宣传很厉害，但实际体验还有不少问题。技术成熟度不够，很多场景还是概念验证阶段。"),
                 ("实践者", 543, "作为{k}的早期用户，我觉得体验还不错。核心功能很实用，效率提升明显。"),
@@ -238,7 +358,7 @@ class ZhihuSearcher:
                 ("技术博主", 890, "作为开发者，我对{k}的技术架构比较认可。API设计合理，文档也不错。但生态还不太成熟。"),
                 ("前瞻分析师", 1120, "基于目前趋势，{k}在未来1-2年会有较大发展。关键技术瓶颈正在被突破，市场需求也在增长。"),
             ],
-            1: [  # 争议性话题
+            1: [
                 ("支持者A", 2341, "{k}确实带来了巨大改变。效率提升显著，很多以前需要几天的工作现在几小时就完成了。"),
                 ("反对者B", 1890, "{k}被严重夸大了。实际上问题很多，宣传与实际严重不符，谨慎对待。"),
                 ("中立者C", 956, "客观说，{k}有优点也有缺点。不要全盘否定，但也不要盲目吹捧。"),
@@ -250,7 +370,7 @@ class ZhihuSearcher:
                 ("学生G", 423, "作为学生，我觉得{k}很有帮助。但价格对学生不太友好。"),
                 ("媒体人H", 1121, "采访了很多相关人士，对{k}的评价两极分化。真相可能介于两者之间。"),
             ],
-            2: [  # 新兴话题
+            2: [
                 ("早期采用者", 678, "{k}是个很有前景的方向。尝鲜体验超出预期，值得关注。目前虽然还在早期，但技术路线清晰。"),
                 ("技术宅", 890, "研究了一下{k}的技术原理，确实有创新。但目前生态还不完善，文档也比较少，学习曲线有点陡。"),
                 ("普通用户", 234, "试用了{k}，感觉还不错。虽然还有很多改进空间，但方向是对的，用户体验在持续改善。"),

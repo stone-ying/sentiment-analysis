@@ -1,0 +1,4 @@
+# Streamlit Cloud 部署配置
+server:
+  headless: true
+  port: 8501
