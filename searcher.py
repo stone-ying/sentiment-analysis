@@ -344,6 +344,7 @@ class ZhihuSearcher:
     async def search_mock(self, keyword: str) -> SearchResult:
         """Mock 搜索：返回丰富的测试数据"""
         mood_idx = hash(keyword) % 3
+        limit = self.limit  # 使用实例的 limit 参数
 
         templates = {
             0: [
@@ -396,7 +397,7 @@ class ZhihuSearcher:
                 comment_count=votes // 10,
             ))
 
-        return SearchResult(keyword=keyword, answers=answers, total=len(answers))
+        return SearchResult(keyword=keyword, answers=answers[:limit], total=len(answers))
 
     @staticmethod
     def _encode(s: str) -> str:

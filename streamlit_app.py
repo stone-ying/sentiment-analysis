@@ -205,7 +205,7 @@ with st.sidebar:
 
     # 分析参数
     st.subheader("📊 分析参数")
-    limit = st.slider("搜索回答数", min_value=5, max_value=100, value=30, step=5)
+    limit = st.slider("搜索回答数", min_value=5, max_value=100, value=50, step=5)
 
     data_mode = st.radio(
         "数据来源",
