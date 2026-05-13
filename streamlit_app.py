@@ -14,6 +14,19 @@ import json
 import base64
 import time
 
+# 可选依赖：安全导入
+try:
+    import plotly.express as px
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
+
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+
 # 确保可以 import 同目录模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -219,6 +232,13 @@ if analyze_btn and keyword:
             analyzer = get_analyzer()
             formatter = get_formatter()
 
+            # 如果侧边栏填了 API 凭证，更新到环境变量
+            if zhihu_app_id and zhihu_app_key:
+                searcher.app_id = zhihu_app_id
+                searcher.app_key = zhihu_app_key
+                os.environ["ZHIHU_APP_ID"] = zhihu_app_id
+                os.environ["ZHIHU_APP_KEY"] = zhihu_app_key
+
             # 搜索
             if use_mock_only:
                 search_result = asyncio.run(searcher.search_mock(keyword))
@@ -251,67 +271,33 @@ if result:
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.markdown(f"""
-        <div class="sentiment-card card-positive">
-            <div class="card-value">{result.sentiment.positive_ratio*100:.1f}%</div>
-            <div class="card-label">🟢 正面 · {result.sentiment.positive_count} 条</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.metric(
+            label="🟢 正面",
+            value=f"{result.sentiment.positive_ratio*100:.1f}%",
+            delta=f"{result.sentiment.positive_count} 条",
+            delta_color="normal"
+        )
 
     with col2:
-        st.markdown(f"""
-        <div class="sentiment-card card-negative">
-            <div class="card-value">{result.sentiment.negative_ratio*100:.1f}%</div>
-            <div class="card-label">🔴 负面 · {result.sentiment.negative_count} 条</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.metric(
+            label="🔴 负面",
+            value=f"{result.sentiment.negative_ratio*100:.1f}%",
+            delta=f"{result.sentiment.negative_count} 条",
+            delta_color="inverse"
+        )
 
     with col3:
-        st.markdown(f"""
-        <div class="sentiment-card card-neutral">
-            <div class="card-value">{result.sentiment.neutral_ratio*100:.1f}%</div>
-            <div class="card-label">🟡 中性 · {result.sentiment.neutral_count} 条</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # 情绪分布图
-    import plotly.express as px
-    import pandas as pd
-
-    sentiment_df = pd.DataFrame({
-        "情绪": ["正面", "负面", "中性"],
-        "数量": [result.sentiment.positive_count, result.sentiment.negative_count, result.sentiment.neutral_count],
-        "比例": [result.sentiment.positive_ratio, result.sentiment.negative_ratio, result.sentiment.neutral_ratio],
-    })
-
-    col_chart1, col_chart2 = st.columns(2)
-
-    with col_chart1:
-        fig = px.pie(
-            sentiment_df, values="数量", names="情绪",
-            color="情绪",
-            color_discrete_map={"正面": "#43e97b", "负面": "#fa709a", "中性": "#a18cd1"},
-            hole=0.4,
+        st.metric(
+            label="🟡 中性",
+            value=f"{result.sentiment.neutral_ratio*100:.1f}%",
+            delta=f"{result.sentiment.neutral_count} 条"
         )
-        fig.update_layout(
-            title="情绪分布饼图",
-            showlegend=True,
-            height=350,
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
-    with col_chart2:
-        fig2 = px.bar(
-            sentiment_df, x="情绪", y="数量",
-            color="情绪",
-            color_discrete_map={"正面": "#43e97b", "负面": "#fa709a", "中性": "#a18cd1"},
-        )
-        fig2.update_layout(
-            title="情绪分布柱状图",
-            showlegend=False,
-            height=350,
-        )
-        st.plotly_chart(fig2, use_container_width=True)
+    # --- 情绪分布图 ---
+    if HAS_PLOTLY and HAS_PANDAS:
+        _render_plotly_charts(result)
+    else:
+        _render_native_charts(result)
 
     # --- 舆情倾向 ---
     st.subheader("📈 舆情倾向")
@@ -359,18 +345,26 @@ if result:
         st.markdown(kw_html, unsafe_allow_html=True)
 
         # 关键词频率图
-        kw_df = pd.DataFrame(result.keywords[:15], columns=["关键词", "频次"])
-        fig_kw = px.bar(
-            kw_df, x="频次", y="关键词", orientation="h",
-            color="频次",
-            color_continuous_scale="Viridis",
-        )
-        fig_kw.update_layout(
-            title="关键词频率 Top 15",
-            height=400,
-            yaxis=dict(autorange="reversed"),
-        )
-        st.plotly_chart(fig_kw, use_container_width=True)
+        if HAS_PLOTLY and HAS_PANDAS:
+            kw_df = pd.DataFrame(result.keywords[:15], columns=["关键词", "频次"])
+            fig_kw = px.bar(
+                kw_df, x="频次", y="关键词", orientation="h",
+                color="频次",
+                color_continuous_scale="Viridis",
+            )
+            fig_kw.update_layout(
+                title="关键词频率 Top 15",
+                height=400,
+                yaxis=dict(autorange="reversed"),
+            )
+            st.plotly_chart(fig_kw, use_container_width=True)
+        else:
+            # 用 Streamlit 原生 bar chart
+            kw_data = {
+                "关键词": [w for w, c in result.keywords[:15]],
+                "频次": [c for w, c in result.keywords[:15]],
+            }
+            st.bar_chart(data=kw_data, x="关键词", y="频次", use_container_width=True)
 
     # --- 词云 ---
     st.subheader("☁️ 词云")
@@ -440,7 +434,113 @@ if not result:
     | 💬 观点提取 | 自动提取代表性观点，标注立场 |
     | 🔑 关键词挖掘 | N-gram + 频率分析，发现讨论焦点 |
     | ☁️ 词云可视化 | 一图看懂讨论热点 |
-    | 📊 交互图表 | 饼图、柱状图、频率图 |
+    | 📊 交互图表 | 饼图/柱状图/频率图 |
 
     > 💡 无需配置即可使用演示数据体验完整功能！
     """)
+
+
+# ============ 图表渲染函数 ============
+
+def _render_plotly_charts(result):
+    """Plotly 图表渲染（需要 plotly + pandas）"""
+    sentiment_df = pd.DataFrame({
+        "情绪": ["正面", "负面", "中性"],
+        "数量": [result.sentiment.positive_count, result.sentiment.negative_count, result.sentiment.neutral_count],
+        "比例": [result.sentiment.positive_ratio, result.sentiment.negative_ratio, result.sentiment.neutral_ratio],
+    })
+
+    col_chart1, col_chart2 = st.columns(2)
+
+    with col_chart1:
+        fig = px.pie(
+            sentiment_df, values="数量", names="情绪",
+            color="情绪",
+            color_discrete_map={"正面": "#43e97b", "负面": "#fa709a", "中性": "#a18cd1"},
+            hole=0.4,
+        )
+        fig.update_layout(title="情绪分布饼图", showlegend=True, height=350)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_chart2:
+        fig2 = px.bar(
+            sentiment_df, x="情绪", y="数量",
+            color="情绪",
+            color_discrete_map={"正面": "#43e97b", "负面": "#fa709a", "中性": "#a18cd1"},
+        )
+        fig2.update_layout(title="情绪分布柱状图", showlegend=False, height=350)
+        st.plotly_chart(fig2, use_container_width=True)
+
+
+def _render_native_charts(result):
+    """Streamlit 原生图表降级方案（无需 plotly/pandas）"""
+    col_chart1, col_chart2 = st.columns(2)
+
+    with col_chart1:
+        # 饼图：用 HTML/CSS 绘制
+        pos_pct = result.sentiment.positive_ratio * 100
+        neg_pct = result.sentiment.negative_ratio * 100
+        neu_pct = result.sentiment.neutral_ratio * 100
+
+        total = max(pos_pct + neg_pct + neu_pct, 1)
+        pos_deg = pos_pct / total * 360
+        neg_deg = neg_pct / total * 360
+        neu_deg = neu_pct / total * 360
+
+        pie_html = f"""
+        <div style="text-align:center;">
+            <svg width="200" height="200" viewBox="0 0 200 200">
+                <circle cx="100" cy="100" r="80" fill="transparent"
+                        stroke="#43e97b" stroke-width="40"
+                        stroke-dasharray="{pos_deg * 1.4} {360 * 1.4 - pos_deg * 1.4}"
+                        transform="rotate(-90 100 100)" />
+                <circle cx="100" cy="100" r="80" fill="transparent"
+                        stroke="#fa709a" stroke-width="40"
+                        stroke-dasharray="{neg_deg * 1.4} {360 * 1.4 - neg_deg * 1.4}"
+                        transform="rotate({pos_deg - 90} 100 100)" />
+                <circle cx="100" cy="100" r="80" fill="transparent"
+                        stroke="#a18cd1" stroke-width="40"
+                        stroke-dasharray="{neu_deg * 1.4} {360 * 1.4 - neu_deg * 1.4}"
+                        transform="rotate({pos_deg + neg_deg - 90} 100 100)" />
+                <circle cx="100" cy="100" r="60" fill="white" />
+                <text x="100" y="105" text-anchor="middle" font-size="14" fill="#333">情绪分布</text>
+            </svg>
+            <div style="margin-top:8px;">
+                <span style="color:#43e97b;">● 正面 {pos_pct:.0f}%</span>&nbsp;
+                <span style="color:#fa709a;">● 负面 {neg_pct:.0f}%</span>&nbsp;
+                <span style="color:#a18cd1;">● 中性 {neu_pct:.0f}%</span>
+            </div>
+        </div>
+        """
+        st.markdown(pie_html, unsafe_allow_html=True)
+
+    with col_chart2:
+        # 柱状图：用 HTML/CSS 绘制
+        max_cnt = max(result.sentiment.positive_count, result.sentiment.negative_count, result.sentiment.neutral_count, 1)
+        bar_html = f"""
+        <div style="padding:10px;">
+            <p style="margin-bottom:12px;font-weight:bold;">情绪分布柱状图</p>
+            <div style="margin-bottom:8px;display:flex;align-items:center;">
+                <span style="width:50px;color:#43e97b;font-weight:bold;">正面</span>
+                <div style="flex:1;background:#eee;border-radius:4px;height:24px;margin-left:8px;">
+                    <div style="background:#43e97b;width:{result.sentiment.positive_count/max_cnt*100}%;height:100%;border-radius:4px;"></div>
+                </div>
+                <span style="width:40px;text-align:right;margin-left:8px;">{result.sentiment.positive_count}</span>
+            </div>
+            <div style="margin-bottom:8px;display:flex;align-items:center;">
+                <span style="width:50px;color:#fa709a;font-weight:bold;">负面</span>
+                <div style="flex:1;background:#eee;border-radius:4px;height:24px;margin-left:8px;">
+                    <div style="background:#fa709a;width:{result.sentiment.negative_count/max_cnt*100}%;height:100%;border-radius:4px;"></div>
+                </div>
+                <span style="width:40px;text-align:right;margin-left:8px;">{result.sentiment.negative_count}</span>
+            </div>
+            <div style="display:flex;align-items:center;">
+                <span style="width:50px;color:#a18cd1;font-weight:bold;">中性</span>
+                <div style="flex:1;background:#eee;border-radius:4px;height:24px;margin-left:8px;">
+                    <div style="background:#a18cd1;width:{result.sentiment.neutral_count/max_cnt*100}%;height:100%;border-radius:4px;"></div>
+                </div>
+                <span style="width:40px;text-align:right;margin-left:8px;">{result.sentiment.neutral_count}</span>
+            </div>
+        </div>
+        """
+        st.markdown(bar_html, unsafe_allow_html=True)
