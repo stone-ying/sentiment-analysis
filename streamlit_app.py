@@ -293,11 +293,8 @@ if result:
             delta=f"{result.sentiment.neutral_count} 条"
         )
 
-    # --- 情绪分布图 ---
-    if HAS_PLOTLY and HAS_PANDAS:
-        _render_plotly_charts(result)
-    else:
-        _render_native_charts(result)
+    # --- 情绪分布图（内联渲染，避免函数未定义错误）---
+    _show_sentiment_charts(result)
 
     # --- 舆情倾向 ---
     st.subheader("📈 舆情倾向")
@@ -440,106 +437,73 @@ if not result:
     """)
 
 
-# ============ 图表渲染函数 ============
+# ============ 图表渲染函数（定义在调用之前）============
 
-def _render_plotly_charts(result):
-    """Plotly 图表渲染（需要 plotly + pandas）"""
-    sentiment_df = pd.DataFrame({
-        "情绪": ["正面", "负面", "中性"],
-        "数量": [result.sentiment.positive_count, result.sentiment.negative_count, result.sentiment.neutral_count],
-        "比例": [result.sentiment.positive_ratio, result.sentiment.negative_ratio, result.sentiment.neutral_ratio],
-    })
-
+def _show_sentiment_charts(result):
+    """情绪分布图表渲染（纯 HTML/CSS，零外部依赖）"""
     col_chart1, col_chart2 = st.columns(2)
 
     with col_chart1:
-        fig = px.pie(
-            sentiment_df, values="数量", names="情绪",
-            color="情绪",
-            color_discrete_map={"正面": "#43e97b", "负面": "#fa709a", "中性": "#a18cd1"},
-            hole=0.4,
-        )
-        fig.update_layout(title="情绪分布饼图", showlegend=True, height=350)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_chart2:
-        fig2 = px.bar(
-            sentiment_df, x="情绪", y="数量",
-            color="情绪",
-            color_discrete_map={"正面": "#43e97b", "负面": "#fa709a", "中性": "#a18cd1"},
-        )
-        fig2.update_layout(title="情绪分布柱状图", showlegend=False, height=350)
-        st.plotly_chart(fig2, use_container_width=True)
-
-
-def _render_native_charts(result):
-    """Streamlit 原生图表降级方案（无需 plotly/pandas）"""
-    col_chart1, col_chart2 = st.columns(2)
-
-    with col_chart1:
-        # 饼图：用 HTML/CSS 绘制
+        # SVG 圆环饼图
         pos_pct = result.sentiment.positive_ratio * 100
         neg_pct = result.sentiment.negative_ratio * 100
         neu_pct = result.sentiment.neutral_ratio * 100
-
-        total = max(pos_pct + neg_pct + neu_pct, 1)
+        total = max(pos_pct + neg_pct + neu_pct, 0.01)
         pos_deg = pos_pct / total * 360
         neg_deg = neg_pct / total * 360
         neu_deg = neu_pct / total * 360
+        C = 2 * 3.14159265 * 80  # 圆周长
 
         pie_html = f"""
-        <div style="text-align:center;">
-            <svg width="200" height="200" viewBox="0 0 200 200">
-                <circle cx="100" cy="100" r="80" fill="transparent"
-                        stroke="#43e97b" stroke-width="40"
-                        stroke-dasharray="{pos_deg * 1.4} {360 * 1.4 - pos_deg * 1.4}"
-                        transform="rotate(-90 100 100)" />
-                <circle cx="100" cy="100" r="80" fill="transparent"
-                        stroke="#fa709a" stroke-width="40"
-                        stroke-dasharray="{neg_deg * 1.4} {360 * 1.4 - neg_deg * 1.4}"
-                        transform="rotate({pos_deg - 90} 100 100)" />
-                <circle cx="100" cy="100" r="80" fill="transparent"
-                        stroke="#a18cd1" stroke-width="40"
-                        stroke-dasharray="{neu_deg * 1.4} {360 * 1.4 - neu_deg * 1.4}"
-                        transform="rotate({pos_deg + neg_deg - 90} 100 100)" />
-                <circle cx="100" cy="100" r="60" fill="white" />
-                <text x="100" y="105" text-anchor="middle" font-size="14" fill="#333">情绪分布</text>
+        <div style="text-align:center;padding:10px;">
+            <strong>📊 情绪分布饼图</strong><br/><br/>
+            <svg width="220" height="220" viewBox="0 0 220 220">
+                <g transform="translate(110,110)">
+                    <circle r="80" fill="none" stroke="#43e97b" stroke-width="35"
+                            stroke-dasharray="{pos_deg/360*C} {C}" transform="rotate(-90)"/>
+                    <circle r="80" fill="none" stroke="#fa709a" stroke-width="35"
+                            stroke-dasharray="{neg_deg/360*C} {C}" transform="rotate({pos_deg-90})"/>
+                    <circle r="80" fill="none" stroke="#a18cd1" stroke-width="35"
+                            stroke-dasharray="{neu_deg/360*C} {C}" transform="rotate({pos_deg+neg_deg-90})"/>
+                    <circle r="55" fill="white"/>
+                    <text y="5" text-anchor="middle" font-size="13" fill="#555">{total:.0f}%</text>
+                </g>
             </svg>
-            <div style="margin-top:8px;">
-                <span style="color:#43e97b;">● 正面 {pos_pct:.0f}%</span>&nbsp;
-                <span style="color:#fa709a;">● 负面 {neg_pct:.0f}%</span>&nbsp;
-                <span style="color:#a18cd1;">● 中性 {neu_pct:.0f}%</span>
+            <div style="margin-top:6px;font-size:0.9rem;">
+                <span style="color:#43e97b;">● 正面 {pos_pct:.1f}%</span>&nbsp;&nbsp;
+                <span style="color:#fa709a;">● 负面 {neg_pct:.1f}%</span>&nbsp;&nbsp;
+                <span style="color:#a18cd1;">● 中性 {neu_pct:.1f}%</span>
             </div>
         </div>
         """
         st.markdown(pie_html, unsafe_allow_html=True)
 
     with col_chart2:
-        # 柱状图：用 HTML/CSS 绘制
+        # CSS 柱状图
         max_cnt = max(result.sentiment.positive_count, result.sentiment.negative_count, result.sentiment.neutral_count, 1)
         bar_html = f"""
         <div style="padding:10px;">
-            <p style="margin-bottom:12px;font-weight:bold;">情绪分布柱状图</p>
-            <div style="margin-bottom:8px;display:flex;align-items:center;">
-                <span style="width:50px;color:#43e97b;font-weight:bold;">正面</span>
-                <div style="flex:1;background:#eee;border-radius:4px;height:24px;margin-left:8px;">
-                    <div style="background:#43e97b;width:{result.sentiment.positive_count/max_cnt*100}%;height:100%;border-radius:4px;"></div>
+            <strong>📊 情绪分布柱状图</strong><br/><br/>
+            <div style="margin-bottom:10px;display:flex;align-items:center;">
+                <span style="width:48px;color:#2e7d32;font-weight:bold;font-size:0.9rem;">正面</span>
+                <div style="flex:1;background:#e8e8e8;border-radius:6px;height:26px;margin-left:8px;overflow:hidden;">
+                    <div style="background:linear-gradient(90deg,#43e97b,#38f9d7);width:{result.sentiment.positive_count/max_cnt*100}%;height:100%;border-radius:6px;min-width:4px;"></div>
                 </div>
-                <span style="width:40px;text-align:right;margin-left:8px;">{result.sentiment.positive_count}</span>
+                <span style="width:42px;text-align:right;margin-left:8px;font-weight:bold;color:#2e7d32;">{result.sentiment.positive_count}</span>
             </div>
-            <div style="margin-bottom:8px;display:flex;align-items:center;">
-                <span style="width:50px;color:#fa709a;font-weight:bold;">负面</span>
-                <div style="flex:1;background:#eee;border-radius:4px;height:24px;margin-left:8px;">
-                    <div style="background:#fa709a;width:{result.sentiment.negative_count/max_cnt*100}%;height:100%;border-radius:4px;"></div>
+            <div style="margin-bottom:10px;display:flex;align-items:center;">
+                <span style="width:48px;color:#c62828;font-weight:bold;font-size:0.9rem;">负面</span>
+                <div style="flex:1;background:#e8e8e8;border-radius:6px;height:26px;margin-left:8px;overflow:hidden;">
+                    <div style="background:linear-gradient(90deg,#fa709a,#fee140);width:{result.sentiment.negative_count/max_cnt*100}%;height:100%;border-radius:6px;min-width:4px;"></div>
                 </div>
-                <span style="width:40px;text-align:right;margin-left:8px;">{result.sentiment.negative_count}</span>
+                <span style="width:42px;text-align:right;margin-left:8px;font-weight:bold;color:#c62828;">{result.sentiment.negative_count}</span>
             </div>
             <div style="display:flex;align-items:center;">
-                <span style="width:50px;color:#a18cd1;font-weight:bold;">中性</span>
-                <div style="flex:1;background:#eee;border-radius:4px;height:24px;margin-left:8px;">
-                    <div style="background:#a18cd1;width:{result.sentiment.neutral_count/max_cnt*100}%;height:100%;border-radius:4px;"></div>
+                <span style="width:48px;color:#6a1b9a;font-weight:bold;font-size:0.9rem;">中性</span>
+                <div style="flex:1;background:#e8e8e8;border-radius:6px;height:26px;margin-left:8px;overflow:hidden;">
+                    <div style="background:linear-gradient(90deg,#a18cd1,#fbc2eb);width:{result.sentiment.neutral_count/max_cnt*100}%;height:100%;border-radius:6px;min-width:4px;"></div>
                 </div>
-                <span style="width:40px;text-align:right;margin-left:8px;">{result.sentiment.neutral_count}</span>
+                <span style="width:42px;text-align:right;margin-left:8px;font-weight:bold;color:#6a1b9a;">{result.sentiment.neutral_count}</span>
             </div>
         </div>
         """
